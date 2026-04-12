@@ -1,0 +1,31 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+.venv
+venv
+*.egg-info
+
+# Environment
+.env
+.env.local
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Docs
+README.md
+*.md
+
+# Scripts (not needed in container)
+setup-service.sh
+gcp-startup.sh

@@ -13,7 +13,7 @@ IMAGE="us-central1-docker.pkg.dev/$PROJECT_ID/reelsearch/$SERVICE:latest"
 source .env
 
 echo "=== Building and pushing image ==="
-gcloud builds submit --tag "$IMAGE"
+gcloud builds submit --config cloudbuild.yaml --substitutions _PROJECT_ID="$PROJECT_ID"
 
 echo "=== Deploying to Cloud Run ==="
 gcloud run deploy "$SERVICE" \

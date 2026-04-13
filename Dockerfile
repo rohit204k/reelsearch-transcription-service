@@ -46,11 +46,6 @@ COPY --from=builder /root/.cache/whisper /root/.cache/whisper
 COPY server.py .
 COPY lib/ lib/
 
-# Create non-root user for security
-RUN useradd --create-home --shell /bin/bash app && \
-    chown -R app:app /app /root/.cache/whisper
-USER app
-
 # Expose port
 EXPOSE 3001
 

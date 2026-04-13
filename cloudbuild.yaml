@@ -1,22 +1,39 @@
 steps:
-  # Pull existing image to use as cache (ignore failure on first build)
+  # Pull existing base image to use as cache (ignore failure on first build)
   - name: gcr.io/cloud-builders/docker
     entrypoint: bash
     args:
       - -c
-      - docker pull us-central1-docker.pkg.dev/$PROJECT_ID/reelsearch/transcription-service:latest || true
+      - docker pull us-central1-docker.pkg.dev/$PROJECT_ID/reelsearch/transcription-base:latest || true
 
-  # Build with cache
+  # Build base image (slow - only rebuilds if requirements.txt or Dockerfile changes)
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --target=base
+      - --cache-from
+      - us-central1-docker.pkg.dev/$PROJECT_ID/reelsearch/transcription-base:latest
+      - -t
+      - us-central1-docker.pkg.dev/$PROJECT_ID/reelsearch/transcription-base:latest
+      - .
+
+  # Push base image
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - us-central1-docker.pkg.dev/$PROJECT_ID/reelsearch/transcription-base:latest
+
+  # Build final app image on top of base (fast - just copies code)
   - name: gcr.io/cloud-builders/docker
     args:
       - build
       - --cache-from
-      - us-central1-docker.pkg.dev/$PROJECT_ID/reelsearch/transcription-service:latest
+      - us-central1-docker.pkg.dev/$PROJECT_ID/reelsearch/transcription-base:latest
       - -t
       - us-central1-docker.pkg.dev/$PROJECT_ID/reelsearch/transcription-service:latest
       - .
 
-  # Push
+  # Push app image
   - name: gcr.io/cloud-builders/docker
     args:
       - push
@@ -24,6 +41,7 @@ steps:
 
 images:
   - us-central1-docker.pkg.dev/$PROJECT_ID/reelsearch/transcription-service:latest
+  - us-central1-docker.pkg.dev/$PROJECT_ID/reelsearch/transcription-base:latest
 
 options:
   logging: CLOUD_LOGGING_ONLY

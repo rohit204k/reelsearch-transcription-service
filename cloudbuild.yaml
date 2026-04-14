@@ -1,47 +1,59 @@
 steps:
-  # Pull existing base image to use as cache (ignore failure on first build)
+  # Pull all cached stage images (ignore failure on first build)
   - name: gcr.io/cloud-builders/docker
     entrypoint: bash
     args:
       - -c
-      - docker pull us-central1-docker.pkg.dev/$PROJECT_ID/reelsearch/transcription-base:latest || true
+      - |
+        docker pull us-central1-docker.pkg.dev/$PROJECT_ID/reelsearch/transcription-builder:latest || true
+        docker pull us-central1-docker.pkg.dev/$PROJECT_ID/reelsearch/transcription-base:latest || true
+        docker pull us-central1-docker.pkg.dev/$PROJECT_ID/reelsearch/transcription-service:latest || true
 
-  # Build base image (slow - only rebuilds if requirements.txt or Dockerfile changes)
+  # Build all stages with BuildKit inline cache metadata embedded
   - name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    env:
+      - DOCKER_BUILDKIT=1
     args:
-      - build
-      - --target=base
-      - --cache-from
-      - us-central1-docker.pkg.dev/$PROJECT_ID/reelsearch/transcription-base:latest
-      - -t
-      - us-central1-docker.pkg.dev/$PROJECT_ID/reelsearch/transcription-base:latest
-      - .
+      - -c
+      - |
+        # builder stage: pip install + whisper model download (~140MB, only reruns if requirements.txt changes)
+        docker build \
+          --build-arg BUILDKIT_INLINE_CACHE=1 \
+          --cache-from us-central1-docker.pkg.dev/$PROJECT_ID/reelsearch/transcription-builder:latest \
+          --target builder \
+          -t us-central1-docker.pkg.dev/$PROJECT_ID/reelsearch/transcription-builder:latest \
+          . && \
+        # base stage: ffmpeg + venv copy (only reruns if builder changes)
+        docker build \
+          --build-arg BUILDKIT_INLINE_CACHE=1 \
+          --cache-from us-central1-docker.pkg.dev/$PROJECT_ID/reelsearch/transcription-builder:latest \
+          --cache-from us-central1-docker.pkg.dev/$PROJECT_ID/reelsearch/transcription-base:latest \
+          --target base \
+          -t us-central1-docker.pkg.dev/$PROJECT_ID/reelsearch/transcription-base:latest \
+          . && \
+        # production stage: just copies server.py + lib/ (fast every time)
+        docker build \
+          --build-arg BUILDKIT_INLINE_CACHE=1 \
+          --cache-from us-central1-docker.pkg.dev/$PROJECT_ID/reelsearch/transcription-builder:latest \
+          --cache-from us-central1-docker.pkg.dev/$PROJECT_ID/reelsearch/transcription-base:latest \
+          --cache-from us-central1-docker.pkg.dev/$PROJECT_ID/reelsearch/transcription-service:latest \
+          -t us-central1-docker.pkg.dev/$PROJECT_ID/reelsearch/transcription-service:latest \
+          .
 
-  # Push base image
+  # Push all images
   - name: gcr.io/cloud-builders/docker
+    entrypoint: bash
     args:
-      - push
-      - us-central1-docker.pkg.dev/$PROJECT_ID/reelsearch/transcription-base:latest
-
-  # Build final app image on top of base (fast - just copies code)
-  - name: gcr.io/cloud-builders/docker
-    args:
-      - build
-      - --cache-from
-      - us-central1-docker.pkg.dev/$PROJECT_ID/reelsearch/transcription-base:latest
-      - -t
-      - us-central1-docker.pkg.dev/$PROJECT_ID/reelsearch/transcription-service:latest
-      - .
-
-  # Push app image
-  - name: gcr.io/cloud-builders/docker
-    args:
-      - push
-      - us-central1-docker.pkg.dev/$PROJECT_ID/reelsearch/transcription-service:latest
+      - -c
+      - |
+        docker push us-central1-docker.pkg.dev/$PROJECT_ID/reelsearch/transcription-builder:latest &
+        docker push us-central1-docker.pkg.dev/$PROJECT_ID/reelsearch/transcription-base:latest &
+        docker push us-central1-docker.pkg.dev/$PROJECT_ID/reelsearch/transcription-service:latest &
+        wait
 
 images:
   - us-central1-docker.pkg.dev/$PROJECT_ID/reelsearch/transcription-service:latest
-  - us-central1-docker.pkg.dev/$PROJECT_ID/reelsearch/transcription-base:latest
 
 options:
   logging: CLOUD_LOGGING_ONLY

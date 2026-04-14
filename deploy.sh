@@ -22,7 +22,7 @@ gcloud run deploy "$SERVICE" \
   --platform managed \
   --allow-unauthenticated \
   --port 3001 \
-  --memory 1Gi \
+  --memory 2Gi \
   --cpu 1 \
   --timeout 600 \
   --no-cpu-throttling \

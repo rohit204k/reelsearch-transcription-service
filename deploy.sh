@@ -25,8 +25,7 @@ gcloud run deploy "$SERVICE" \
   --memory 1Gi \
   --cpu 1 \
   --timeout 300 \
-  --set-env-vars "SUPABASE_URL=$SUPABASE_URL,SUPABASE_SERVICE_KEY=$SUPABASE_SERVICE_KEY,INSTAGRAM_COOKIES_FILE=/tmp/cookies.txt" \
-  --set-secrets "/tmp/cookies.txt=INSTAGRAM_COOKIES:latest"
+  --set-env-vars "SUPABASE_URL=$SUPABASE_URL,SUPABASE_SERVICE_KEY=$SUPABASE_SERVICE_KEY,APIFY_API_TOKEN=$APIFY_API_TOKEN"
 
 echo ""
 echo "=== Deployed ==="

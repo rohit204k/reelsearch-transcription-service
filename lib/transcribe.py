@@ -2,34 +2,40 @@
 
 import subprocess
 import tempfile
+import requests
 from pathlib import Path
 from typing import Optional, Tuple
 from .config import Config
 
 
 def resolve_video_url(reel_url: str) -> Tuple[Optional[str], Optional[dict]]:
-    """Use yt-dlp to resolve a reel permalink into a direct video stream URL."""
-    import yt_dlp
-
-    opts = {"quiet": True, "no_warnings": True, "format": "best"}
-    
-    if Config.INSTAGRAM_COOKIES_FILE:
-        opts["cookiefile"] = Config.INSTAGRAM_COOKIES_FILE
-    elif Config.INSTAGRAM_COOKIES_FROM_BROWSER:
-        opts["cookiesfrombrowser"] = (Config.INSTAGRAM_COOKIES_FROM_BROWSER,)
-    elif Config.INSTAGRAM_USERNAME and Config.INSTAGRAM_PASSWORD:
-        opts["username"] = Config.INSTAGRAM_USERNAME
-        opts["password"] = Config.INSTAGRAM_PASSWORD
-    elif Config.INSTAGRAM_NETRC_FILE:
-        opts["netrc"] = True
-        if Config.INSTAGRAM_NETRC_FILE and Config.INSTAGRAM_NETRC_FILE != "~/.netrc":
-            opts["netrc_location"] = Config.INSTAGRAM_NETRC_FILE
-    
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(reel_url, download=False)
-        if not info:
-            return None, None
-        return info.get("url"), info
+    """Use Apify instagram-scraper to resolve a reel permalink into a direct video URL."""
+    response = requests.post(
+        f"https://api.apify.com/v2/acts/apify~instagram-scraper/run-sync-get-dataset-items?token={Config.APIFY_API_TOKEN}",
+        json={
+            "directUrls": [reel_url],
+            "resultsType": "posts",
+            "resultsLimit": 1,
+        },
+        timeout=120,
+    )
+    response.raise_for_status()
+    items = response.json()
+    if not items:
+        return None, None
+    item = items[0]
+    video_url = item.get("videoUrl")
+    if not video_url:
+        return None, None
+    info = {
+        "title": item.get("alt", ""),
+        "description": item.get("caption", ""),
+        "thumbnail": item.get("displayUrl", ""),
+        "duration": item.get("videoDuration"),
+        "view_count": item.get("videoViewCount"),
+        "like_count": item.get("likesCount"),
+    }
+    return video_url, info
 
 
 def extract_audio(video_url: str) -> Optional[str]:

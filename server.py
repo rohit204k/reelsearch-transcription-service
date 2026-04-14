@@ -5,13 +5,13 @@ Run with: python server.py
 
 import re
 from typing import Optional
-from fastapi import FastAPI, HTTPException, Header
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from lib.transcribe import transcribe_reel
 from lib.auth import get_user_from_token
-from lib.indexer import insert_reel, update_reel, get_reel_by_permalink
+from lib.indexer import insert_reel, update_reel, get_reel_by_permalink, get_reel
 
 app = FastAPI(title="ReelSearch Transcription Service")
 
@@ -42,43 +42,16 @@ def get_user_id(authorization: Optional[str]) -> str:
     return user["id"]
 
 
-@app.post("/api/submit")
-async def submit_reel(req: SubmitRequest, authorization: Optional[str] = Header(None)):
-    """Accept a reel URL, transcribe it, store in DB, and return result."""
-
-    # Authenticate user
-    user_id = get_user_id(authorization)
-
-    url = req.url.strip()
-
-    # Validate URL
-    if not REEL_URL_PATTERN.match(url):
-        raise HTTPException(status_code=400, detail="Invalid Instagram reel URL")
-
-    # Normalize permalink
-    permalink = url.split("?")[0]
-    if not permalink.endswith("/"):
-        permalink += "/"
-
-    # Check if already exists
-    existing = get_reel_by_permalink(permalink, user_id=user_id)
-    if existing:
-        return {"status": "exists", "reel": existing}
-
-    # Insert as pending
-    reel = insert_reel(permalink, user_id=user_id)
-    reel_id = reel["id"]
-
+def _process_reel(reel_id: str, permalink: str) -> None:
+    """Background task: transcribe reel and update DB."""
     try:
-        # Transcribe
         transcript, info, error = transcribe_reel(permalink)
 
         if error:
             update_reel(reel_id, {"status": "error"})
-            raise HTTPException(status_code=422, detail=f"Transcription failed: {error}")
+            return
 
-        # Update with results
-        update_data = {
+        update_reel(reel_id, {
             "transcript": transcript,
             "status": "done",
             "title": (info or {}).get("title", ""),
@@ -87,16 +60,54 @@ async def submit_reel(req: SubmitRequest, authorization: Optional[str] = Header(
             "duration": (info or {}).get("duration"),
             "view_count": (info or {}).get("view_count"),
             "like_count": (info or {}).get("like_count"),
-        }
-        updated = update_reel(reel_id, update_data)
+        })
 
-        return {"status": "ok", "reel": updated}
-
-    except HTTPException:
-        raise
     except Exception as e:
         update_reel(reel_id, {"status": "error"})
-        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/submit")
+async def submit_reel(
+    req: SubmitRequest,
+    background_tasks: BackgroundTasks,
+    authorization: Optional[str] = Header(None),
+):
+    """Accept a reel URL, insert as pending, kick off transcription in background."""
+
+    user_id = get_user_id(authorization)
+
+    url = req.url.strip()
+
+    if not REEL_URL_PATTERN.match(url):
+        raise HTTPException(status_code=400, detail="Invalid Instagram reel URL")
+
+    # Normalize permalink
+    permalink = url.split("?")[0]
+    if not permalink.endswith("/"):
+        permalink += "/"
+
+    # Return existing record immediately if already processed
+    existing = get_reel_by_permalink(permalink, user_id=user_id)
+    if existing:
+        return {"status": "exists", "reel": existing}
+
+    # Insert as pending and return immediately
+    reel = insert_reel(permalink, user_id=user_id)
+
+    # Transcribe in background
+    background_tasks.add_task(_process_reel, reel["id"], permalink)
+
+    return {"status": "pending", "reel": reel}
+
+
+@app.get("/api/reels/{reel_id}")
+async def get_reel_status(reel_id: str, authorization: Optional[str] = Header(None)):
+    """Poll for reel status."""
+    get_user_id(authorization)
+    reel = get_reel(reel_id)
+    if not reel:
+        raise HTTPException(status_code=404, detail="Reel not found")
+    return {"reel": reel}
 
 
 @app.get("/api/health")

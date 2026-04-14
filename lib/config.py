@@ -28,5 +28,8 @@ class Config:
     GRAPH_API_BASE = "https://graph.instagram.com"
     GRAPH_API_VERSION = "v21.0"
 
+    # Apify
+    APIFY_API_TOKEN = os.getenv("APIFY_API_TOKEN", "")
+
     # OpenAI (optional – for Whisper API instead of local model)
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")

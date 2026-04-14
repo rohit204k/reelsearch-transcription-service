@@ -2,16 +2,21 @@
 
 import subprocess
 import tempfile
+import time
 import requests
 from pathlib import Path
 from typing import Optional, Tuple
 from .config import Config
 
+APIFY_MAX_WAIT_SECS = 120  # max time to wait for Apify run
+APIFY_POLL_INTERVAL = 5
+DOWNLOAD_TIMEOUT = 120      # max time to download video
+FFMPEG_TIMEOUT = 180        # max time for ffmpeg to extract audio
+WHISPER_TIMEOUT = 300       # max time for Whisper transcription
+
 
 def resolve_video_url(reel_url: str) -> Tuple[Optional[str], Optional[dict]]:
     """Use Apify instagram-scraper (async) to resolve a reel permalink into a direct video URL."""
-    import time
-
     token = Config.APIFY_API_TOKEN
 
     # Step 1: Start the run
@@ -30,8 +35,9 @@ def resolve_video_url(reel_url: str) -> Tuple[Optional[str], Optional[dict]]:
     dataset_id = run["defaultDatasetId"]
 
     # Step 2: Poll until finished
-    for _ in range(24):  # max 2 min (24 x 5s)
-        time.sleep(5)
+    polls = APIFY_MAX_WAIT_SECS // APIFY_POLL_INTERVAL
+    for _ in range(polls):
+        time.sleep(APIFY_POLL_INTERVAL)
         status_response = requests.get(
             f"https://api.apify.com/v2/acts/apify~instagram-scraper/runs/{run_id}?token={token}",
             timeout=10,
@@ -67,7 +73,24 @@ def resolve_video_url(reel_url: str) -> Tuple[Optional[str], Optional[dict]]:
     return video_url, info
 
 
-def extract_audio(video_url: str) -> Optional[str]:
+def download_video(video_url: str) -> Optional[str]:
+    """Download video to a temp file. Returns the file path."""
+    tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+    tmp_path = tmp.name
+    tmp.close()
+    try:
+        with requests.get(video_url, stream=True, timeout=DOWNLOAD_TIMEOUT) as r:
+            r.raise_for_status()
+            with open(tmp_path, "wb") as f:
+                for chunk in r.iter_content(chunk_size=8192):
+                    f.write(chunk)
+        return tmp_path
+    except Exception:
+        Path(tmp_path).unlink(missing_ok=True)
+        return None
+
+
+def extract_audio(video_path: str) -> Optional[str]:
     """Extract audio-only to a temp mp3 file via ffmpeg. Returns the file path."""
     tmp = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
     tmp_path = tmp.name
@@ -75,7 +98,7 @@ def extract_audio(video_url: str) -> Optional[str]:
 
     cmd = [
         "ffmpeg",
-        "-i", video_url,
+        "-i", video_path,
         "-vn",
         "-acodec", "libmp3lame",
         "-ab", "128k",
@@ -83,7 +106,7 @@ def extract_audio(video_url: str) -> Optional[str]:
         "-y",
         tmp_path,
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=FFMPEG_TIMEOUT)
     if result.returncode != 0:
         Path(tmp_path).unlink(missing_ok=True)
         return None
@@ -101,16 +124,21 @@ def transcribe_audio(audio_path: str, model_size: str = "base") -> Optional[str]
 
 def transcribe_reel(reel_url: str, model_size: str = "base") -> Tuple[Optional[str], Optional[dict], Optional[str]]:
     """
-    End-to-end: reel permalink → resolve via yt-dlp → extract audio → transcribe.
+    End-to-end: reel permalink → Apify → download video → extract audio → transcribe.
     Returns (transcript, metadata, error_message).
     """
+    video_path = None
     audio_path = None
     try:
         video_url, info = resolve_video_url(reel_url)
         if not video_url:
             return None, None, "Could not resolve video URL"
 
-        audio_path = extract_audio(video_url)
+        video_path = download_video(video_url)
+        if not video_path:
+            return None, None, "Could not download video"
+
+        audio_path = extract_audio(video_path)
         if not audio_path:
             return None, None, "Could not extract audio"
 
@@ -122,5 +150,7 @@ def transcribe_reel(reel_url: str, model_size: str = "base") -> Tuple[Optional[s
     except Exception as e:
         return None, None, str(e)
     finally:
+        if video_path:
+            Path(video_path).unlink(missing_ok=True)
         if audio_path:
             Path(audio_path).unlink(missing_ok=True)

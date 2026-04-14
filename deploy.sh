@@ -24,7 +24,7 @@ gcloud run deploy "$SERVICE" \
   --port 3001 \
   --memory 1Gi \
   --cpu 1 \
-  --timeout 300 \
+  --timeout 600 \
   --set-env-vars "SUPABASE_URL=$SUPABASE_URL,SUPABASE_SERVICE_KEY=$SUPABASE_SERVICE_KEY,APIFY_API_TOKEN=$APIFY_API_TOKEN"
 
 echo ""

@@ -9,18 +9,47 @@ from .config import Config
 
 
 def resolve_video_url(reel_url: str) -> Tuple[Optional[str], Optional[dict]]:
-    """Use Apify instagram-scraper to resolve a reel permalink into a direct video URL."""
-    response = requests.post(
-        f"https://api.apify.com/v2/acts/apify~instagram-scraper/run-sync-get-dataset-items?token={Config.APIFY_API_TOKEN}",
+    """Use Apify instagram-scraper (async) to resolve a reel permalink into a direct video URL."""
+    import time
+
+    token = Config.APIFY_API_TOKEN
+
+    # Step 1: Start the run
+    run_response = requests.post(
+        f"https://api.apify.com/v2/acts/apify~instagram-scraper/runs?token={token}",
         json={
             "directUrls": [reel_url],
             "resultsType": "posts",
             "resultsLimit": 1,
         },
-        timeout=120,
+        timeout=30,
     )
-    response.raise_for_status()
-    items = response.json()
+    run_response.raise_for_status()
+    run = run_response.json()["data"]
+    run_id = run["id"]
+    dataset_id = run["defaultDatasetId"]
+
+    # Step 2: Poll until finished
+    for _ in range(24):  # max 2 min (24 x 5s)
+        time.sleep(5)
+        status_response = requests.get(
+            f"https://api.apify.com/v2/acts/apify~instagram-scraper/runs/{run_id}?token={token}",
+            timeout=10,
+        )
+        status_response.raise_for_status()
+        status = status_response.json()["data"]["status"]
+        if status == "SUCCEEDED":
+            break
+        if status in ("FAILED", "ABORTED", "TIMED-OUT"):
+            return None, None
+
+    # Step 3: Fetch results
+    dataset_response = requests.get(
+        f"https://api.apify.com/v2/datasets/{dataset_id}/items?token={token}",
+        timeout=10,
+    )
+    dataset_response.raise_for_status()
+    items = dataset_response.json()
     if not items:
         return None, None
     item = items[0]

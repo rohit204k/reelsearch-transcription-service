@@ -48,6 +48,7 @@ def _process_reel(reel_id: str, permalink: str) -> None:
         transcript, info, error = transcribe_reel(permalink)
 
         if error:
+            print(f"Transcription error: {error}")
             update_reel(reel_id, {"status": "error"})
             return
 
@@ -63,6 +64,7 @@ def _process_reel(reel_id: str, permalink: str) -> None:
         })
 
     except Exception as e:
+        print(f"Transcription exception: {e}")
         update_reel(reel_id, {"status": "error"})
 
 

@@ -7,7 +7,10 @@ import re
 from typing import Optional
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+import requests
+from urllib.parse import urlparse
 
 from lib.transcribe import transcribe_reel
 from lib.auth import get_user_from_token
@@ -110,6 +113,50 @@ async def get_reel_status(reel_id: str, authorization: Optional[str] = Header(No
     if not reel:
         raise HTTPException(status_code=404, detail="Reel not found")
     return {"reel": reel}
+
+
+@app.get("/api/proxy-image")
+async def proxy_image(url: str):
+    """
+    Proxy image endpoint to serve Instagram thumbnails and other images.
+    Avoids CORS and referrer policy issues.
+    
+    Usage: /api/proxy-image?url=<encoded_url>
+    """
+    if not url:
+        raise HTTPException(status_code=400, detail="Missing url parameter")
+    
+    # Basic URL validation
+    try:
+        parsed = urlparse(url)
+        if not parsed.scheme or not parsed.netloc:
+            raise ValueError("Invalid URL format")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid URL format")
+    
+    try:
+        # Fetch the image with timeout
+        response = requests.get(url, timeout=10, allow_redirects=True)
+        response.raise_for_status()
+        
+        # Get content type from response headers
+        content_type = response.headers.get("content-type", "application/octet-stream")
+        
+        # Return as streaming response
+        return StreamingResponse(
+            iter([response.content]),
+            media_type=content_type,
+            headers={
+                "Cache-Control": "public, max-age=3600",
+                "Content-Disposition": "inline",
+            }
+        )
+    except requests.exceptions.Timeout:
+        raise HTTPException(status_code=504, detail="Image fetch timeout")
+    except requests.exceptions.HTTPError as e:
+        raise HTTPException(status_code=502, detail=f"Failed to fetch image: {str(e)}")
+    except requests.exceptions.RequestException as e:
+        raise HTTPException(status_code=502, detail=f"Failed to fetch image: {str(e)}")
 
 
 @app.get("/api/health")
